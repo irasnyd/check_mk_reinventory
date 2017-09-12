@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Re-inventory a single host. This should only be called by the cmk_reinventory
+# script, with the lock already held.
+
+# Path to the Check_MK livestatus socket
+LIVESTATUS="/var/spool/nagios/cmd/livestatus"
+
+# Hostname to run on
+HN="$1"
+
+if [[ "$#" -ne "1" ]]; then
+	echo "ERROR: incorrect arguments"
+	echo "Usage: $0 hostname"
+	exit 1
+fi
+
+# Automatically reinventory any new services.
+# Kill the process after 5 minutes in case there is a hanging machine.
+echo "Automatically reinventory: $HN"
+timeout --kill-after=10s 5m cmk -I "$HN" 2>&1
+
+# Reschedule the next check of the Check_MK inventory service immediately.
+# This should help the next invocation of the cmk_inventory script run
+# more quickly, since it will have less hosts to check.
+echo "Reschedule next Check_MK inventory service check: $HN"
+NOW="$(date +%s)"
+echo "COMMAND [${NOW}] SCHEDULE_SVC_CHECK;${HN};Check_MK inventory;${NOW}" | unixcat "$LIVESTATUS"

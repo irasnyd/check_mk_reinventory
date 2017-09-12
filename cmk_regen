@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# A script to automatically regenerate the nagios configuration files
+# using Check_MK, and then sleep while the Nagios daemon restarts.
+
+# Regenerate and reload the Nagios configuration
+cmk -O
+RET=$?
+
+# Sleep a while to give Nagios time to restart
+sleep 10
+
+exit $RET

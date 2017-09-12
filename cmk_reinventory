@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# A script to automatically rescan any hosts which have undiscovered
+# services. This is determined using the Check_MK livestatus plugin.
+#
+# This script should be run under a lock to not conflict with other
+# automatic invocations of "cmk", such as by puppet.
+
+# Name of this script's log output
+LOGNAME='cmk-reinventory'
+
+# Path to the Check_MK livestatus socket
+LIVESTATUS="/var/spool/nagios/cmd/livestatus"
+
+# Nagios Status Codes
+NAGIOS_OK=0
+NAGIOS_WARNING=1
+NAGIOS_CRITICAL=2
+NAGIOS_UNKNOWN=3
+
+TMPFILE="$(mktemp)"
+
+cleanup() {
+	rm -f "$TMPFILE"
+}
+
+# call the cleanup function on interrupt or exit
+trap cleanup SIGHUP SIGINT SIGTERM EXIT
+
+# Get a list of all online hosts where the Check_MK inventory service is
+# in either the WARNING or CRITICAL state. This means that it has
+# undiscovered services.
+cat << EOF | unixcat "$LIVESTATUS" > "$TMPFILE"
+GET services
+Columns: host_name
+Filter: description = Check_MK inventory
+Filter: host_state = $NAGIOS_OK
+Filter: state = $NAGIOS_WARNING
+Filter: state = $NAGIOS_CRITICAL
+Or: 2
+EOF
+
+# Exit early if nothing has changed
+if [[ ! -s "$TMPFILE" ]]; then
+	echo "No hosts to reinventory" | logger -t "$LOGNAME"
+	exit 0
+fi
+
+# Update the DNS cache
+cmk --update-dns-cache
+
+# Reinventory new machines in parallel to speed things up
+cat "$TMPFILE" | parallel --will-cite /etc/check_mk/scripts/cmk_reinventory_one | logger -t "$LOGNAME"
+
+# Regenerate and reload the Nagios configuration
+cmk -O | logger -t "$LOGNAME"
+RET="$?"
+
+# Sleep a while to give Nagios time to restart
+sleep 10
+exit $RET
